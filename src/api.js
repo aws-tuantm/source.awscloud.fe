@@ -1,4 +1,4 @@
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://yba8kgabs7.execute-api.ap-southeast-1.amazonaws.com';
 
 export const api = {
   // 1. Events CRUD
