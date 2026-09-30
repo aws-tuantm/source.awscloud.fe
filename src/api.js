@@ -51,17 +51,46 @@ export const api = {
     return res.json();
   },
 
-  // 2. Direct File Upload to S3 (Banner / Avatar)
+  // 2. Direct File Upload to S3 (Banner / Avatar via Presigned URL)
   async uploadFile(file) {
-    const formData = new FormData();
-    formData.append('file', file);
-    const res = await fetch(`${API_BASE_URL}/upload`, {
+    if (!file) throw new Error('Vui lòng chọn file cần tải lên.');
+
+    // 1. Xin presigned URL từ backend Lambda qua JSON
+    const urlRes = await fetch(`${API_BASE_URL}/upload-url`, {
       method: 'POST',
-      body: formData,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fileName: file.name,
+        fileType: file.type || 'image/jpeg',
+      }),
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || data.error || 'Upload ảnh lên S3 thất bại.');
-    return data; // { message, url, key }
+
+    const urlData = await urlRes.json();
+    if (!urlRes.ok) {
+      throw new Error(urlData.message || urlData.error || 'Không thể lấy đường dẫn tải ảnh lên S3.');
+    }
+
+    const { uploadUrl, fileUrl, key } = urlData;
+
+    // 2. Tải trực tiếp file lên S3 bằng PUT Presigned URL
+    const s3UploadRes = await fetch(uploadUrl, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': file.type || 'image/jpeg',
+      },
+      body: file,
+    });
+
+    if (!s3UploadRes.ok) {
+      throw new Error('Tải ảnh trực tiếp lên Amazon S3 thất bại.');
+    }
+
+    return {
+      message: 'Upload ảnh lên S3 thành công!',
+      url: fileUrl,
+      fileUrl: fileUrl,
+      key: key,
+    };
   },
 
   // 3. Attendees
@@ -74,11 +103,32 @@ export const api = {
     return res.json();
   },
 
-  // 4. Submit Registration (Hỗ trợ FormData kèm File Avatar)
-  async submitRsvp(formData) {
+  // 4. Submit Registration (Hỗ trợ JSON hoặc FormData kèm File Avatar)
+  async submitRsvp(inputData) {
+    let payload = inputData;
+
+    // Nếu truyền vào FormData, tự động upload file avatar trước (nếu có) rồi chuyển thành JSON
+    if (typeof FormData !== 'undefined' && inputData instanceof FormData) {
+      let avatarUrl = '';
+      const avatarFile = inputData.get('avatar');
+      if (avatarFile instanceof File && avatarFile.size > 0) {
+        const uploadRes = await this.uploadFile(avatarFile);
+        avatarUrl = uploadRes.url || uploadRes.fileUrl;
+      }
+
+      payload = {
+        event_id: inputData.get('event_id'),
+        full_name: inputData.get('full_name'),
+        email: inputData.get('email'),
+        response: inputData.get('response') || 'Yes',
+        avatar_url: avatarUrl || undefined,
+      };
+    }
+
     const res = await fetch(`${API_BASE_URL}/rsvp`, {
       method: 'POST',
-      body: formData,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
     });
     const data = await res.json();
     if (!res.ok) {
