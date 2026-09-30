@@ -1,4 +1,4 @@
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://yba8kgabs7.execute-api.ap-southeast-1.amazonaws.com';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 
 export const api = {
   // 1. Events CRUD
@@ -51,11 +51,34 @@ export const api = {
     return res.json();
   },
 
-  // 2. Direct File Upload to S3 (Banner / Avatar via Presigned URL)
+  // 2. Direct File Upload to S3 (Banner / Avatar)
   async uploadFile(file) {
     if (!file) throw new Error('Vui lòng chọn file cần tải lên.');
 
-    // 1. Xin presigned URL từ backend Lambda qua JSON
+    // 1. Thử gửi file qua Backend endpoint /upload (Backend đẩy trực tiếp lên S3, tránh lỗi S3 CORS trên trình duyệt)
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const res = await fetch(`${API_BASE_URL}/upload`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        return {
+          message: data.message || 'Upload ảnh lên S3 thành công!',
+          url: data.url,
+          fileUrl: data.url,
+          key: data.key,
+        };
+      }
+    } catch {
+      // Fallback sang luồng Presigned URL nếu /upload không khả dụng
+    }
+
+    // 2. Luồng Presigned URL dự phòng
     const urlRes = await fetch(`${API_BASE_URL}/upload-url`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -72,7 +95,6 @@ export const api = {
 
     const { uploadUrl, fileUrl, key } = urlData;
 
-    // 2. Tải trực tiếp file lên S3 bằng PUT Presigned URL
     const s3UploadRes = await fetch(uploadUrl, {
       method: 'PUT',
       headers: {
@@ -82,7 +104,7 @@ export const api = {
     });
 
     if (!s3UploadRes.ok) {
-      throw new Error('Tải ảnh trực tiếp lên Amazon S3 thất bại.');
+      throw new Error('Tải ảnh trực tiếp lên Amazon S3 thất bại. (Vui lòng kiểm tra CORS trên S3 Bucket)');
     }
 
     return {
